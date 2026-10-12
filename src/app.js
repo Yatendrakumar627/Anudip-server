@@ -17,8 +17,23 @@ import { asyncHandler, serialize } from './utils.js';
 
 const app = express();
 app.disable('x-powered-by');
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({ origin: (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').map((value) => value.trim()), credentials: false }));
+const rawOrigins = (process.env.CLIENT_ORIGIN || '*').split(',').map((val) => val.trim()).filter(Boolean);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+      rawOrigins.includes('*') ||
+      rawOrigins.includes(origin) ||
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.onrender.com') ||
+      origin.includes('localhost')
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  credentials: false,
+}));
 app.use(compression());
 app.use(express.json({ limit: '1mb' }));
 
@@ -278,6 +293,19 @@ app.use('/api/batches', crudFactory(Batch, {
 }));
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/auth', authRoutes);
+
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    service: 'NGO Training Hub API',
+    uptime: `${Math.round(process.uptime())}s`,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
 
 app.get('/api/dashboard', asyncHandler(async (_req, res) => {
   const [students, sessions, batches, attendanceTotal, presentTotal, placementAgg] = await Promise.all([
