@@ -40,8 +40,13 @@ app.use(express.json({ limit: '1mb' }));
 
 // Reactive Workspace Cache Versioning: guarantees instantaneous 304s on polling and immediate invalidation on mutations
 let workspaceVersion = Date.now();
+let cachedWorkspacePayload = null;
+let cachedWorkspaceVersion = null;
+
 export function bumpWorkspaceVersion() {
   workspaceVersion = Date.now();
+  cachedWorkspacePayload = null;
+  cachedWorkspaceVersion = null;
 }
 
 app.use((req, res, next) => {
@@ -244,6 +249,13 @@ app.get('/api/workspace', asyncHandler(async (req, res) => {
     return res.status(304).end();
   }
 
+  res.set('ETag', currentEtag);
+  res.set('Cache-Control', 'private, no-cache');
+
+  if (cachedWorkspacePayload && cachedWorkspaceVersion === workspaceVersion) {
+    return res.json(cachedWorkspacePayload);
+  }
+
   const [students, sessions, attendance, placements, batches] = await Promise.all([
     Student.find().sort({ createdAt: -1 }).limit(1000).lean(),
     TrainingSession.find().sort({ date: 1, startTime: 1 }).limit(1000).lean(),
@@ -252,15 +264,18 @@ app.get('/api/workspace', asyncHandler(async (req, res) => {
     Batch.find().sort({ createdAt: -1 }).limit(500).lean(),
   ]);
 
-  res.set('ETag', currentEtag);
-  res.set('Cache-Control', 'private, no-cache');
-  res.json({
+  const payload = {
     students: students.map(serialize),
     sessions: sessions.map(serialize),
     attendance: attendance.map(serialize),
     placements: placements.map(serialize),
     batches: batches.map(serialize),
-  });
+  };
+
+  cachedWorkspacePayload = payload;
+  cachedWorkspaceVersion = workspaceVersion;
+
+  res.json(payload);
 }));
 app.use('/api/students', crudFactory(Student, {
   searchFields: ['name', 'email', 'field', 'batch', 'phone'],

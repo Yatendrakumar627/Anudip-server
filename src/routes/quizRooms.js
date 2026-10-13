@@ -56,7 +56,7 @@ function generateRoomCode(prefix = 'ANUDIP') {
   return `${prefix}-${rand}`;
 }
 
-// Clean up expired rooms immediately on query (guarantees instantaneous deletion even before MongoDB background TTL cycle)
+// Background cleanup of expired rooms every 5 minutes (non-blocking, zero request latency)
 async function cleanupExpiredRooms() {
   try {
     await QuizRoom.deleteMany({ expiresAt: { $exists: true, $ne: null, $lte: new Date() } });
@@ -64,12 +64,16 @@ async function cleanupExpiredRooms() {
     console.warn('Expired rooms cleanup error:', err.message);
   }
 }
+setInterval(cleanupExpiredRooms, 5 * 60 * 1000).unref();
 
-// Ensure at least one seed room exists
+// Ensure seed room runs once on boot, not on every HTTP request
+let seedChecked = false;
 async function ensureSeedRoom() {
-  const count = await QuizRoom.countDocuments();
-  if (count === 0) {
-    try {
+  if (seedChecked) return;
+  seedChecked = true;
+  try {
+    const count = await QuizRoom.countDocuments();
+    if (count === 0) {
       await QuizRoom.create({
         title: 'Full Stack & Web Fundamentals Assessment',
         roomCode: 'WEB-101',
@@ -103,26 +107,37 @@ async function ensureSeedRoom() {
           },
         ],
       });
-    } catch (err) {
-      console.warn('Seed room creation skipped:', err.message);
     }
+  } catch (err) {
+    console.warn('Seed room creation skipped:', err.message);
   }
 }
+ensureSeedRoom();
 
-// 1. List all quiz rooms (Admin view)
+// 1. List all active quiz rooms (High-speed single indexed read, zero write-locks)
 router.get('/', asyncHandler(async (_req, res) => {
-  await cleanupExpiredRooms();
-  await ensureSeedRoom();
-  const rooms = await QuizRoom.find().sort({ createdAt: -1 }).lean();
+  const rooms = await QuizRoom.find({
+    $or: [
+      { expiresAt: { $exists: false } },
+      { expiresAt: null },
+      { expiresAt: { $gt: new Date() } },
+    ],
+  }).sort({ createdAt: -1 }).lean();
   res.json(rooms.map(serialize));
 }));
 
-// 2. Student join view: fetch room by code (Omits answers for student integrity)
+// 2. Student join view: fetch room by code (Single indexed read, instant response)
 router.get('/code/:code', asyncHandler(async (req, res) => {
-  await cleanupExpiredRooms();
-  await ensureSeedRoom();
   const code = (req.params.code || '').trim().toUpperCase();
-  const room = await QuizRoom.findOne({ roomCode: code }).lean();
+  const room = await QuizRoom.findOne({
+    roomCode: code,
+    $or: [
+      { expiresAt: { $exists: false } },
+      { expiresAt: null },
+      { expiresAt: { $gt: new Date() } },
+    ],
+  }).lean();
+
   if (!room) {
     return res.status(404).json({ message: `Quiz room with code "${code}" was not found or has expired after 48 hours.` });
   }
