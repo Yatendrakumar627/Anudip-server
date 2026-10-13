@@ -12,6 +12,7 @@ import sessionRoutes from './routes/sessions.js';
 import attendanceRoutes from './routes/attendance.js';
 import integrationRoutes from './routes/integrations.js';
 import authRoutes from './routes/auth.js';
+import quizRoomRoutes from './routes/quizRooms.js';
 import Attendance from './models/Attendance.js';
 import { asyncHandler, serialize } from './utils.js';
 
@@ -293,6 +294,7 @@ app.use('/api/batches', crudFactory(Batch, {
 }));
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/quiz-rooms', quizRoomRoutes);
 
 app.get('/', (_req, res) => {
   res.status(200).json({
